@@ -28,6 +28,12 @@ and runnable examples in `assets/examples/*.ts`.
   optional snippets.
 - **No secrets anywhere** — examples read env vars (`KSEF_KSEF_TOKEN` etc.)
   and never print token values. Preserve this property in every edit.
+- **No high-entropy literals** — example hashes/signatures from the official
+  docs must be replaced with structural placeholders like
+  `{invoiceHashBase64Url}`; entropy-based secret scanners (Snyk Agent Scan
+  W008) flag realistic Base64 values as leaked secrets. Scan a clean export
+  (`git archive HEAD | tar -x -C <tmpdir>`), not the working tree — `.git`
+  objects are high-entropy noise.
 - English prose; Polish domain terms (UPO, NIP, sesja wsadowa) kept with a
   translation on first use.
 

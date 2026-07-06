@@ -22,8 +22,11 @@ Path segments, in order: seller NIP, issue date (`P_1` field of the XML) as
 `DD-MM-YYYY`, SHA-256 of the invoice XML file in **Base64URL**:
 
 ```
-https://qr-test.ksef.mf.gov.pl/invoice/1111111111/01-02-2026/UtQp9Gpc51y-u3xApZjIjgkpZ01js-J8KflSPW8WzIE
+https://qr-test.ksef.mf.gov.pl/invoice/1111111111/01-02-2026/{invoiceHashBase64Url}
 ```
+
+where `{invoiceHashBase64Url}` is the 43-character unpadded Base64URL encoding
+of the file's SHA-256 digest.
 
 Label printed **under** the QR code:
 
@@ -53,7 +56,7 @@ without a trailing slash**, i.e. everything from the host up to and including
 the invoice hash segment:
 
 ```
-qr-test.ksef.mf.gov.pl/certificate/Nip/1111111111/1111111111/01F20A5D352AE590/UtQp9Gpc51y-u3xApZjIjgkpZ01js-J8KflSPW8WzIE
+qr-test.ksef.mf.gov.pl/certificate/Nip/1111111111/1111111111/01F20A5D352AE590/{invoiceHashBase64Url}
 ```
 
 Signature algorithms (choose per your certificate's key):
