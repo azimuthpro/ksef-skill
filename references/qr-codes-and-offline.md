@@ -56,7 +56,7 @@ without a trailing slash**, i.e. everything from the host up to and including
 the invoice hash segment:
 
 ```
-qr-test.ksef.mf.gov.pl/certificate/Nip/1111111111/1111111111/01F20A5D352AE590/{invoiceHashBase64Url}
+qr-test.ksef.mf.gov.pl/certificate/Nip/1111111111/1111111111/{certSerialHex}/{invoiceHashBase64Url}
 ```
 
 Signature algorithms (choose per your certificate's key):
