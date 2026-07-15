@@ -13,7 +13,7 @@ description: >
   SDK exists) plus Vercel patterns: cron polling, token storage, function
   limits.
 metadata:
-  version: "1.0.0"
+  version: "1.0.1"
   author: "Azimuth PRO"
   homepage: "https://github.com/azimuthpro/ksef-skill"
 license: MIT

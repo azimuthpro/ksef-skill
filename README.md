@@ -70,6 +70,24 @@ npx skills add azimuthpro/ksef-skill
 
 ## Version History
 
+### 1.0.1 (2026-07-15)
+
+Correctness fixes found by re-verifying against the live OpenAPI spec:
+
+- **KSeF number validator**: CRC-8 was computed over 33 characters (including
+  the separating hyphen) instead of the specified 32, so `isValidKsefNumber`
+  rejected every valid KSeF number — including the official docs' own example
+- **Error code extraction**: `ksefCode` read `exceptionDetailList` at the body
+  root; it is nested under `exception`. The getter always returned `undefined`,
+  making the error-21470 stale-key refresh-and-retry path unreachable. Also
+  reads the RFC 9457 `errors[].code` shape, and no longer mistakes a 429
+  rate-limit body's HTTP status for a KSeF code
+- Fixed an over-length challenge example, a checksum-invalid KSeF number
+  example, and the claim that `/permissions/attachments/status` reports system
+  availability (it reports attachment consent)
+- Corrected CSR key length (RSA 2048 exactly, not a minimum), Owner rights
+  (excludes `VatUeManage`), added `PefInvoicing` and part-upload `401`
+
 ### 1.0.0 (2026-07-06)
 
 - Initial release covering KSeF API 2.0 (verified against the official
