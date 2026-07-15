@@ -57,7 +57,23 @@ and runnable examples in `assets/examples/*.ts`.
 
 ## Verifying changes
 
-- Type-check examples: `cd assets/examples && npx tsc --noEmit --strict --target es2022 --module nodenext --skipLibCheck *.ts` (ambient shims for optional deps may be needed).
+- Type-check examples (`node_modules/` here is gitignored; a bare `npx tsc`
+  resolves to an unrelated decoy package, and without `@types/node` you get
+  ~39 spurious `TS2591` errors):
+
+  ```bash
+  cd assets/examples
+  npm i -D typescript @types/node
+  npx tsc --noEmit --strict --target es2022 --module nodenext \
+    --moduleResolution nodenext --skipLibCheck --types node *.ts
+  ```
+- Sanity-run pure-crypto helpers with `npx tsx` (AES round-trip, hash
+  helpers) — they have no network dependencies.
+- Verify claims against the live OpenAPI rather than the narrative docs, which
+  lag it (`curl -s https://api-test.ksef.mf.gov.pl/docs/v2/openapi.json`).
+  Response-shape bugs (wrong nesting, wrong field level) type-check clean and
+  are invisible to secret/SAST scanners — exercise the parse with a realistic
+  body instead.
 - Sanity-run pure-crypto helpers with `npx tsx` (AES round-trip, hash
   helpers) — they have no network dependencies.
 - Live testing requires TEST-environment credentials; the bootstrap
