@@ -36,8 +36,8 @@ Key subtleties:
 - Upload each part with exactly the `method`, `url` and `headers` returned in
   `partUploadRequests` (matched by `ordinalNumber`), raw encrypted bytes as the
   body, **without** `Authorization` — the URL embeds its own access key.
-  Expected responses: `201` accepted, `400` bad data, `403` upload window
-  expired.
+  Expected responses: `201` accepted, `400` bad data, `401` bad
+  authentication, `403` upload window expired.
 - Time budget: each part gets `partCount × 20 minutes` (a 2-part package
   → 40 min per part). Uploads may run in parallel — recommended.
 - `offlineMode: true` at session level declares the whole package as

@@ -180,9 +180,11 @@ Additional rules:
 - The buyer's receipt date for an offline invoice delivered outside KSeF is
   the actual delivery date; otherwise it's the KSeF-number assignment date.
 - A correcting invoice may only be sent after the original has its KSeF number.
-- Check `GET /permissions/attachments/status` and system announcements; the
-  current system state (unavailability/failure) is published in BIP and via
-  the API interface software.
+- No endpoint reports system unavailability or failure: the current state is
+  announced in BIP and via the interface software only. Detect outages from
+  your own call failures (see the auto-classification rules above), not by
+  polling. (`GET /permissions/attachments/status` is unrelated — it reports
+  whether the context may issue invoices *with attachments*.)
 
 ## Technical correction (korekta techniczna)
 

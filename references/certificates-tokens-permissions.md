@@ -68,7 +68,8 @@ session cannot enroll certificates):
    certificate you authenticated with. **Use them verbatim in the CSR** — any
    modification gets the application rejected.
 3. Generate a key pair and a **PKCS#10 CSR**, DER, Base64-encoded. Keys:
-   RSA ≥2048 or **EC P-256 (recommended)**. Node's `crypto` cannot build CSRs —
+   RSA 2048 (the docs specify this exact length, not a minimum) or **EC P-256
+   (recommended)**. Node's `crypto` cannot build CSRs —
    use a library such as `@peculiar/x509`:
 
    ```typescript
@@ -99,9 +100,12 @@ session cannot enroll certificates):
 6. Housekeeping: `POST /certificates/query` (metadata search),
    `POST /certificates/{certificateSerialNumber}/revoke`.
 
-Certificates are valid for a bounded period (max ~2 years; check
-`/certificates/limits` and enrollment response for the actual window) — put
-`validTo` in your monitoring so renewal isn't a surprise.
+Certificates are valid for a bounded period. Neither `/certificates/limits`
+(quotas only) nor the enrollment status response (`requestDate`, `status`,
+`certificateSerialNumber`) carries the window: read `validFrom`/`validTo` from
+`POST /certificates/query`, or parse the X.509 returned by
+`POST /certificates/retrieve`. Put `validTo` in your monitoring so renewal
+isn't a surprise.
 
 ## Permissions model (overview)
 
@@ -109,12 +113,13 @@ You will meet permissions mostly through error 415 at auth ("no permissions in
 context") or invoice status 410. The full model is rich; the essentials:
 
 - **Owner**: a subject authenticating with a certificate whose NIP equals the
-  context NIP is automatically the context owner — full rights, including
+  context NIP — or a PESEL linked to it — is automatically the context owner:
+  all invoice and administrative rights *except* `VatUeManage`, including
   granting.
 - Permission kinds you can grant to persons/entities: `CredentialsManage`,
   `CredentialsRead`, `InvoiceWrite`, `InvoiceRead`, `Introspection`,
   `SubunitManage`, `EnforcementOperations`, plus entity-level authorizations
-  (`SelfInvoicing`, `TaxRepresentative`, `RRInvoicing`).
+  (`SelfInvoicing`, `TaxRepresentative`, `RRInvoicing`, `PefInvoicing`).
 - Grants can be **direct** (to a person/entity in your context) or
   **indirect** (an intermediary — e.g. an accounting office — receives rights
   to act for your clients); "general" indirect grants apply across all

@@ -66,7 +66,7 @@ Details that matter:
 
   ```json
   {
-    "challenge": "20261231-CR-0123456789ABCD-0123456789-AB",
+    "challenge": "20261231-CR-0123456789-0123456789-AB",
     "contextIdentifier": { "type": "Nip", "value": "1111111111" },
     "encryptedToken": "BASE64...",
     "publicKeyId": "44-char id of the MF key used",
