@@ -253,10 +253,18 @@ export class KsefApiError extends Error {
   ) {
     super(message ?? `KSeF API error: HTTP ${httpStatus}`);
   }
-  /** KSeF error/status code if the body carries one (e.g. 21470, 440). */
+  /**
+   * KSeF error code if the body carries one (e.g. 21470).
+   * `exceptionDetailList` sits under `exception`, not at the body root.
+   * `errors[]` is the RFC 9457 shape (opt in with `X-Error-Format: problem-details`);
+   * the legacy `exception` envelope still ships but is marked deprecated.
+   */
   get ksefCode(): number | undefined {
-    const b = this.body as { status?: { code?: number }; exceptionDetailList?: Array<{ exceptionCode?: number }> } | null;
-    return b?.status?.code ?? b?.exceptionDetailList?.[0]?.exceptionCode;
+    const b = this.body as {
+      exception?: { exceptionDetailList?: Array<{ exceptionCode?: number }> };
+      errors?: Array<{ code?: number }>;
+    } | null;
+    return b?.exception?.exceptionDetailList?.[0]?.exceptionCode ?? b?.errors?.[0]?.code;
   }
 }
 

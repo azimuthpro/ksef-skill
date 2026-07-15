@@ -255,13 +255,14 @@ rotate before the 12 h expiry. Never reuse a session across tenants.
 ## KSeF number
 
 Format (35 chars): `{NIP}-{YYYYMMDD}-{12 hex chars}-{2 hex chars CRC-8}`, e.g.
-`5265877635-20261101-ABCDEF012345-AB`. The trailing byte is CRC-8
-(poly `0x07`, init `0x00`) of the preceding characters — validate it when
+`5265877635-20250826-0100001AF629-AF`. The trailing byte is CRC-8
+(poly `0x07`, init `0x00`) of the **32-character data part** — the hyphen
+separating it from the checksum is *not* included — validate it when
 accepting KSeF numbers from external sources:
 
 ```typescript
 export function isValidKsefNumber(n: string): boolean {
-  const m = /^(\d{10}-\d{8}-[0-9A-F]{12}-)([0-9A-F]{2})$/.exec(n);
+  const m = /^(\d{10}-\d{8}-[0-9A-F]{12})-([0-9A-F]{2})$/.exec(n);
   if (!m) return false;
   const data = Buffer.from(m[1]!, 'ascii');
   let crc = 0;
