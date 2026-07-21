@@ -70,6 +70,42 @@ Never prefix any of these with `NEXT_PUBLIC_`. Multi-tenant apps store
 per-tenant KSeF tokens in the database (encrypted with
 `KSEF_CREDENTIALS_ENCRYPTION_KEY` via `node:crypto` AES-GCM), not in env vars.
 
+> **Quote values containing `|` in `.env` files.** KSeF tokens may contain
+> pipes and other shell metacharacters. Next.js and bun parse `.env` correctly,
+> but `source .env.local` in bash/zsh silently truncates an unquoted value at
+> the first `|` — you then authenticate with a partial token and get a
+> confusing `450`. Always write `KSEF_KSEF_TOKEN="..."`.
+
+### The env-fallback trap in multi-tenant apps
+
+A credential loader that falls back to `process.env.KSEF_KSEF_TOKEN` when a
+tenant has no row is a **cross-tenant invoicing incident**, not a convenience:
+every tenant without configured KSeF credentials would silently issue invoices
+under the env token's NIP — legally binding documents filed against the wrong
+taxpayer, discovered by the tax office rather than by you. Fail closed:
+
+```typescript
+// lib/ksef/credentials.ts
+import 'server-only';
+
+export async function loadKsefCredentials(tenantId: string) {
+  const row = await db.ksefCredentials.findByTenant(tenantId);
+  if (row) return decryptCredentials(row);
+
+  // Dev-only convenience: never on production, never against PRD.
+  const isProd = process.env.NODE_ENV === 'production';
+  const isPrdApi = !/api-(test|demo)\./.test(process.env.KSEF_BASE_URL ?? '');
+  if (isProd || isPrdApi) return null;
+
+  const token = process.env.KSEF_KSEF_TOKEN;
+  const contextNip = process.env.KSEF_CONTEXT_NIP;
+  return token && contextNip ? { ksefToken: token, contextNip } : null;
+}
+```
+
+Return `null` (and surface "KSeF not configured for this tenant") rather than
+borrowing someone else's identity.
+
 ## State schema (Postgres sketch)
 
 ```sql
@@ -124,6 +160,7 @@ create table ksef_exports (              -- in-flight export operations
   checkpoint_tenant text not null,
   checkpoint_subject text not null,
   cipher_key_enc   bytea not null,
+  iv               bytea not null,       -- needed to decrypt the package parts
   created_at       timestamptz not null default now(),
   completed_at     timestamptz
 );
@@ -186,6 +223,13 @@ crons — the KSeF call sequence stays identical.
   cron fan-out should still stagger tenants to smooth your own egress.
 - Keep per-tenant isolation strict: session AES keys and tokens must never
   cross tenant boundaries; scope every query by `tenant_id`.
+- **Bind the invoice's seller NIP to the authenticating context.** The seller
+  in `Podmiot1` typically comes from your tenant profile while the token
+  authenticates `ksef_credentials.context_nip` — two tables with nothing
+  linking them. Compare them (digits only) both when saving KSeF settings *and*
+  again immediately before every send, because the tenant profile can be edited
+  afterwards. Implementation in
+  [sending-interactive.md](sending-interactive.md#pre-send-validation).
 - An accounting-office product (one operator, many client companies) can
   alternatively authenticate in each client's context via **indirect grants**
   — see [certificates-tokens-permissions.md](certificates-tokens-permissions.md).
@@ -195,7 +239,11 @@ crons — the KSeF call sequence stays identical.
 - [ ] FA(3) XML generation validated against the XSD (TEST accepts FA(2), PRD will not)
 - [ ] Bootstrap: production KSeF token minted by the customer's owner account, stored encrypted
 - [ ] `KSEF_BASE_URL` switched; QR host switched to `qr.ksef.mf.gov.pl` (QR links embed the environment!)
-- [ ] Duplicate handling (invoice status 440) and technical-correction path tested
+- [ ] Duplicate handling (invoice status 440) tested end to end — including
+      fetching the UPO from the *original* session — and the technical-correction path
+- [ ] Seller-NIP ↔ context-NIP guard active at settings-save and at send time
+- [ ] No env-var credential fallback reachable in production (multi-tenant apps)
+- [ ] Rejection diagnostics persisted: `status.code` **and** `status.details`
 - [ ] Rate-limit budget reviewed against expected volume; batch mode for anything > single-invoice trickle
 - [ ] UPOs persisted and retrievable per invoice; offline-mode QR II works if offline invoicing is offered
 - [ ] Statutory dates verified against current law (mandate phases in from 1 Feb 2026 — podatki.gov.pl/ksef)
