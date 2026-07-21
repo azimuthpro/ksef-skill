@@ -124,28 +124,53 @@ export function generateSessionEncryption(): SessionEncryption {
 ## 3. AES-256-CBC document encryption
 
 Algorithm: **AES-256-CBC with PKCS#7 padding** (Node's `createCipheriv` pads
-with PKCS#7 by default). The IV appears in **two places** — this is the classic
-KSeF gotcha:
+with PKCS#7 by default).
 
-1. it is sent Base64-encoded in `encryption.initializationVector` when you open
-   a session / request an export, **and**
-2. it is **prepended to the ciphertext** of every encrypted file, so the
-   encrypted document you upload (and hash) is `IV ‖ ciphertext`.
+> ### The IV is transmitted, never embedded
+>
+> **Send the raw ciphertext. Do not prepend the IV to it.** The IV crosses the
+> wire exactly once, Base64-encoded in `encryption.initializationVector` when
+> you open a session or request an export, and KSeF reuses that one IV for
+> every invoice, every batch part, and the export package of that session.
+>
+> **Beware: the official docs are wrong here.** `sesja-interaktywna.md` and
+> `sesja-wsadowa.md` both describe the IV as *"dołączany jako prefiks do
+> szyfrogramu"* (attached as a prefix to the ciphertext). That clause dates
+> from the docs repo's initial commit and contradicts every official client:
+> C# `CryptographyService.EncryptBytesWithAES256` returns the `CryptoStream`
+> output alone, and Java's `encryptBytesWithAes256` is a bare
+> `return cipher.doFinal(content)`. Neither client concatenates or strips a
+> 16-byte prefix anywhere, including the E2E tests that run against the live
+> TEST environment.
+>
+> Prepending it fails in a way that points at the wrong field: KSeF decrypts
+> 16 bytes too many, so the plaintext it recovers is longer than your declared
+> `invoiceSize` and you get invoice status **430** — *"Rozmiar faktury nie
+> zgadza się z zadeklarowaną wartością"* (invoice size does not match the
+> declared value). Chasing the size fields never finds it. Status **435**
+> (decryption error) is the other possible outcome.
 
 ```typescript
-/** Encrypt a document for KSeF: returns IV-prefixed ciphertext. */
+/** Encrypt a document for KSeF: raw AES-256-CBC ciphertext, no IV prefix. */
 export function encryptDocument(plaintext: Buffer, enc: SessionEncryption): Buffer {
   const cipher = createCipheriv('aes-256-cbc', enc.cipherKey, enc.iv);
-  return Buffer.concat([enc.iv, cipher.update(plaintext), cipher.final()]);
+  return Buffer.concat([cipher.update(plaintext), cipher.final()]);
 }
 
-/** Decrypt an IV-prefixed AES-256-CBC payload (e.g. an export package part). */
-export function decryptDocument(encrypted: Buffer, cipherKey: Buffer): Buffer {
-  const iv = encrypted.subarray(0, 16);
+/**
+ * Decrypt a payload received from KSeF (e.g. an export package part) with the
+ * key and IV you supplied in the export request — nothing to strip.
+ */
+export function decryptDocument(
+  encrypted: Buffer, cipherKey: Buffer, iv: Buffer,
+): Buffer {
   const decipher = createDecipheriv('aes-256-cbc', cipherKey, iv);
-  return Buffer.concat([decipher.update(encrypted.subarray(16)), decipher.final()]);
+  return Buffer.concat([decipher.update(encrypted), decipher.final()]);
 }
 ```
+
+Hash and size always describe **that same ciphertext**: `encryptedInvoiceHash`
+= Base64(SHA-256(ciphertext)), `encryptedInvoiceSize` = `ciphertext.byteLength`.
 
 ## 4. Wrapping the AES key (RSAES-OAEP)
 
@@ -209,8 +234,8 @@ export function fileMetadata(data: Buffer): FileMetadata {
 ```
 
 When sending an invoice you must provide metadata of **both** forms of the file:
-the plaintext XML (`invoiceHash`, `invoiceSize`) and the IV-prefixed encrypted
-file (`encryptedInvoiceHash`, `encryptedInvoiceSize`). See
+the plaintext XML (`invoiceHash`, `invoiceSize`) and the encrypted file —
+ciphertext only — (`encryptedInvoiceHash`, `encryptedInvoiceSize`). See
 [sending-interactive.md](sending-interactive.md).
 
 ## 6. KSeF-token encryption (runtime authentication)

@@ -106,8 +106,10 @@ Poll `GET /invoices/exports/{referenceNumber}`:
 not rate-limited, expires at `expirationDate`), sizes and hashes of the
 plaintext and encrypted part.
 
-Each downloaded part is `IV ‖ AES-256-CBC ciphertext` — decrypt with
-`decryptDocument()`, then unzip. The archive holds the invoice XMLs plus
+Each downloaded part is raw AES-256-CBC ciphertext with **no IV prefix** —
+decrypt the whole part with `decryptDocument(part, cipherKey, iv)` using the
+key and IV *you* supplied in the export request, concatenate the decrypted
+parts, then unzip. The archive holds the invoice XMLs plus
 **`_metadata.json`** — `{ invoices: InvoiceMetadata[] }`, the same shape as the
 metadata query returns; use it for deduplication and for mapping files to KSeF
 numbers.
@@ -151,13 +153,17 @@ export async function GET(req: Request) {
     if (st.status.code === 100) continue;
     if (st.status.code !== 200 || !st.package) { await db.failExport(exp.id, st.status.code); continue; }
 
+    // Parts are a BINARY split of one archive: decrypt each, concatenate, then
+    // unzip once. Unzipping a single part fails unless the package has exactly one.
+    const decrypted: Buffer[] = [];
     for (const part of st.package.parts) {
       const res = await fetch(part.url, { method: part.method }); // no auth header
       const encrypted = Buffer.from(await res.arrayBuffer());
-      const files = unzipSync(decryptDocument(encrypted, exp.cipherKey));
-      const meta = JSON.parse(Buffer.from(files['_metadata.json']!).toString('utf8'));
-      await db.upsertInvoices(meta.invoices, files); // ON CONFLICT (ksef_number) DO NOTHING
+      decrypted.push(decryptDocument(encrypted, exp.cipherKey, exp.iv));
     }
+    const files = unzipSync(Buffer.concat(decrypted));
+    const meta = JSON.parse(Buffer.from(files['_metadata.json']!).toString('utf8'));
+    await db.upsertInvoices(meta.invoices, files); // ON CONFLICT (ksef_number) DO NOTHING
     await db.completeExport(exp.id, {
       nextFrom: st.package.isTruncated
         ? st.package.lastPermanentStorageDate!
@@ -186,15 +192,19 @@ export async function GET(req: Request) {
         },
       },
     );
-    await db.recordExport({ referenceNumber, cipherKey: enc.cipherKey, checkpointId: cp.id });
+    // Persist BOTH halves: the IV is not carried inside the downloaded parts.
+    await db.recordExport({
+      referenceNumber, cipherKey: enc.cipherKey, iv: enc.iv, checkpointId: cp.id,
+    });
   }
 
   return NextResponse.json({ ok: true });
 }
 ```
 
-Store `cipherKey` for pending exports encrypted at rest and delete it once the
-package is ingested. Schedule this route every ~5 minutes in `vercel.json`; the
+Store `cipherKey` (and its `iv`) for pending exports encrypted at rest and
+delete them once the package is ingested. Losing either makes the package
+permanently undecryptable — KSeF will not re-key an export. Schedule this route every ~5 minutes in `vercel.json`; the
 ≥15-minute *per-checkpoint* pacing lives in `dueSyncCheckpoints`
 ([architecture-and-vercel.md](architecture-and-vercel.md) has the cron config
 and DDL).

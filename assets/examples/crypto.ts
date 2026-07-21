@@ -24,17 +24,22 @@ export function generateSessionEncryption(): SessionEncryption {
   return { cipherKey: randomBytes(32), iv: randomBytes(16) };
 }
 
-// ---------- AES-256-CBC (PKCS#7), IV prefixed to ciphertext ----------
+// ---------- AES-256-CBC (PKCS#7) ----------
+//
+// The payload is the RAW ciphertext: the IV is NOT prepended. It is sent once,
+// separately, in `encryption.initializationVector` at session/export open, and
+// reused for every document of that session. (The MF docs claim the IV is a
+// prefix — the official C#/Java clients prove otherwise; prepending it yields
+// invoice status 430 "size does not match the declared value".)
 
 export function encryptDocument(plaintext: Buffer, enc: SessionEncryption): Buffer {
   const cipher = createCipheriv('aes-256-cbc', enc.cipherKey, enc.iv);
-  return Buffer.concat([enc.iv, cipher.update(plaintext), cipher.final()]);
+  return Buffer.concat([cipher.update(plaintext), cipher.final()]);
 }
 
-export function decryptDocument(encrypted: Buffer, cipherKey: Buffer): Buffer {
-  const iv = encrypted.subarray(0, 16);
+export function decryptDocument(encrypted: Buffer, cipherKey: Buffer, iv: Buffer): Buffer {
   const decipher = createDecipheriv('aes-256-cbc', cipherKey, iv);
-  return Buffer.concat([decipher.update(encrypted.subarray(16)), decipher.final()]);
+  return Buffer.concat([decipher.update(encrypted), decipher.final()]);
 }
 
 // ---------- RSAES-OAEP (SHA-256 + MGF1-SHA-256) key wrapping ----------

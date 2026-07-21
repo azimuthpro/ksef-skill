@@ -29,10 +29,11 @@ Key subtleties:
 - The split is **binary** — parts are *not* standalone archives; KSeF
   concatenates the decrypted parts and then decompresses.
 - `batchFile.fileHash`/`fileSize` describe the **plaintext archive**;
-  `fileParts[i].fileHash`/`fileSize` describe each **encrypted** part
-  (which, per [crypto-and-client.md](crypto-and-client.md), is IV-prefixed).
-- Every part is encrypted with the **same** session key and IV declared in
-  `encryption`.
+  `fileParts[i].fileHash`/`fileSize` describe each **encrypted** part — the
+  raw ciphertext, with **no IV prefix**
+  ([crypto-and-client.md](crypto-and-client.md#3-aes-256-cbc-document-encryption)).
+- Every part is encrypted independently with the **same** session key and IV,
+  declared once in `encryption`.
 - Upload each part with exactly the `method`, `url` and `headers` returned in
   `partUploadRequests` (matched by `ordinalNumber`), raw encrypted bytes as the
   body, **without** `Authorization` — the URL embeds its own access key.
