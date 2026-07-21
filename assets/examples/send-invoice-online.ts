@@ -63,10 +63,22 @@ export async function sendInvoice(
 }
 
 export interface InvoiceStatus {
-  status: { code: number; description?: string; details?: string[] };
+  status: {
+    code: number;
+    description?: string;
+    /** Array of strings — the specific reason behind an umbrella code like 430. */
+    details?: string[] | null;
+    /** String-keyed object (NOT a [{key,value}] list). 440 → originalKsefNumber. */
+    extensions?: Record<string, string | null> | null;
+  };
   ksefNumber?: string;
   acquisitionDate?: string;
   upoDownloadUrl?: string;
+}
+
+/** Everything KSeF told us about a rejection — always log/persist this, not just the code. */
+export function describeStatus(st: InvoiceStatus): string {
+  return [st.status.description, ...(st.status.details ?? [])].filter(Boolean).join(' | ');
 }
 
 export async function pollInvoice(
@@ -122,8 +134,14 @@ if (process.argv[1]?.endsWith('send-invoice-online.ts')) {
     console.log('Invoice reference:', invoiceRef);
 
     const st = await pollInvoice(baseUrl, accessToken.token, sessionRef, invoiceRef);
-    console.log('Status:', st.status.code, st.status.description ?? '');
+    console.log('Status:', st.status.code, describeStatus(st));
     if (st.ksefNumber) console.log('KSeF number:', st.ksefNumber);
+    if (st.status.code === 440) {
+      // Duplicate: the invoice is already in KSeF from an earlier session.
+      console.log('Duplicate of:', st.status.extensions?.originalKsefNumber);
+      console.log('Original session:', st.status.extensions?.originalSessionReferenceNumber);
+      console.log('Fetch its UPO from the ORIGINAL session, not this one.');
+    }
 
     await ksefFetch(baseUrl, `/sessions/online/${sessionRef}/close`, {
       method: 'POST',

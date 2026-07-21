@@ -17,7 +17,12 @@ interface SessionInvoice {
   ksefNumber?: string;
   invoiceFileName?: string;
   upoDownloadUrl?: string;
-  status: { code: number; description?: string };
+  status: {
+    code: number;
+    description?: string;
+    details?: string[] | null;
+    extensions?: Record<string, string | null> | null;
+  };
 }
 
 export async function listSessionInvoices(
@@ -85,11 +90,34 @@ if (process.argv[1]?.endsWith('poll-session-status.ts')) {
         `status ${inv.status.code}`,
         inv.ksefNumber ? `→ ${inv.ksefNumber}` : '',
       );
+      // The reason behind an umbrella code (430 = schema | hash | size | encoding)
+      // lives only in description/details — never persist the bare code.
+      if (inv.status.code > 200) {
+        console.log(
+          '   ',
+          [inv.status.description, ...(inv.status.details ?? [])].filter(Boolean).join(' | '),
+        );
+      }
       if (inv.status.code === 200 && inv.ksefNumber && inv.upoDownloadUrl) {
         const upo = await downloadUpo(inv.upoDownloadUrl);
         const file = `upo-${inv.ksefNumber}.xml`;
         writeFileSync(file, upo);
         console.log(`   UPO saved: ${file}`);
+      }
+      // Duplicate: the UPO exists, but only in the session that first accepted it.
+      if (inv.status.code === 440) {
+        const originalKsefNumber = inv.status.extensions?.originalKsefNumber;
+        const originalSessionRef = inv.status.extensions?.originalSessionReferenceNumber;
+        if (originalKsefNumber && originalSessionRef) {
+          const upo = await ksefFetch<string>(
+            baseUrl,
+            `/sessions/${originalSessionRef}/invoices/ksef/${originalKsefNumber}/upo`,
+            { accessToken: accessToken.token },
+          );
+          const file = `upo-${originalKsefNumber}.xml`;
+          writeFileSync(file, upo);
+          console.log(`   duplicate of ${originalKsefNumber}; UPO saved: ${file}`);
+        }
       }
     }
   })().catch((e) => {

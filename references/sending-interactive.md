@@ -20,8 +20,79 @@ permission, and the crypto helpers from
 - The system detects **duplicates by business data**, not file hash:
   seller NIP (`Podmiot1`) + invoice kind (`RodzajFaktury`) + invoice number
   (`P_2`). A duplicate gets invoice status **440** with the original KSeF
-  number in the status extensions. Coordinate invoice numbering across
-  branches/systems that share a NIP.
+  number in `status.extensions` (see [§3.1](#31-reading-a-rejection)).
+  Coordinate invoice numbering across branches/systems that share a NIP.
+
+## Pre-send validation
+
+Three checks, all cheap, that between them prevent the most common rejections
+and the most expensive mistake. Run them before you even open a session.
+
+**1. NIPs are 10 bare digits.** The FA(3) type `TNrNIP` is `[1-9]((\d[1-9])|([1-9]\d))\d{7}`
+— no dashes, spaces, or `PL` prefix. The usual cause of a violation is a
+display helper (`formatNip()` → `123-456-32-18`) reaching the XML builder.
+**Build XML from raw domain values; apply presentation formatting only in the
+UI layer.** A separator here surfaces as invoice status `430`, whose
+description mentions schema validation but not which field.
+
+**2. The NIP checksum is valid.** Invalid NIPs sail through the XSD (the
+pattern is syntax-only) and fail later, often first on a correction.
+
+**3. The seller NIP equals the authenticating context NIP.** `Podmiot1` usually
+comes from your tenant profile while the token authenticates a separate stored
+context — nothing links the two. Check at settings-save time *and* again before
+each send, since the profile can change afterwards.
+
+```typescript
+// lib/ksef/nip.ts
+import 'server-only';
+
+/** Digits only — accepts "123-456-32-18", "PL1234563218", "1234563218". */
+export function normalizeNip(input: string): string {
+  return input.replace(/\D/g, '');
+}
+
+/** NIP checksum: weights 6,5,7,2,3,4,5,6,7 over the first 9 digits, mod 11. */
+export function isValidNip(input: string): boolean {
+  const d = normalizeNip(input);
+  if (!/^[1-9]\d{9}$/.test(d)) return false;
+  const weights = [6, 5, 7, 2, 3, 4, 5, 6, 7];
+  const sum = weights.reduce((acc, w, i) => acc + w * Number(d[i]), 0) % 11;
+  return sum !== 10 && sum === Number(d[9]);
+}
+
+/** True when both identify the same taxpayer, ignoring formatting. */
+export function sameNip(a: string, b: string): boolean {
+  return normalizeNip(a) === normalizeNip(b) && normalizeNip(a).length === 10;
+}
+
+/** Value ready for a TNrNIP element — throws rather than emitting bad XML. */
+export function toTNrNip(input: string): string {
+  const d = normalizeNip(input);
+  if (!isValidNip(d)) throw new Error('Invalid NIP (format or checksum)');
+  return d;
+}
+```
+
+Wire the context check into the send path, not only into settings:
+
+```typescript
+const creds = await loadKsefCredentials(tenantId);
+if (!creds) throw new Error('KSeF is not configured for this tenant');
+if (!sameNip(invoice.sellerNip, creds.contextNip)) {
+  throw new Error(
+    `Seller NIP ${invoice.sellerNip} does not match the KSeF context ` +
+    `${creds.contextNip} — refusing to file this invoice under another taxpayer`,
+  );
+}
+```
+
+Validating the built XML against the published XSD in CI catches (1) and much
+of what `430` otherwise reports only as a generic verification error:
+
+```bash
+xmllint --noout --schema schemat-FA-3.xsd invoice.xml
+```
 
 ## 1. Open a session
 
@@ -66,14 +137,17 @@ POST /sessions/online/{referenceNumber}/invoices
   "invoiceSize": 12345,
   "encryptedInvoiceHash": "SHA-256 of the encrypted file, Base64",
   "encryptedInvoiceSize": 12384,
-  "encryptedInvoiceContent": "Base64(IV ‖ AES-256-CBC ciphertext)",
+  "encryptedInvoiceContent": "Base64(AES-256-CBC ciphertext — no IV prefix)",
   "offlineMode": false,
   "hashOfCorrectedInvoice": null
 }
 ```
 
-- `encryptedInvoice*` fields describe the **IV-prefixed** encrypted file (what
-  `encryptDocument()` returns).
+- `encryptedInvoice*` fields describe the **raw ciphertext** (what
+  `encryptDocument()` returns) — the IV was already sent in the session's
+  `encryption` object and must **not** be prepended here. Doing so returns
+  `430` complaining about the *size*, not the encryption
+  ([crypto-and-client.md](crypto-and-client.md#3-aes-256-cbc-document-encryption)).
 - `offlineMode: true` declares an offline-issued invoice
   ([qr-codes-and-offline.md](qr-codes-and-offline.md));
   `hashOfCorrectedInvoice` is only used for technical corrections.
@@ -143,9 +217,9 @@ Invoice status codes (same for batch invoices):
 | 405 | Cancelled because the session failed |
 | 410 | Insufficient permission scope |
 | 415 | Attachments not allowed for this sender |
-| 430 | File verification error (schema, hash, size, encoding) |
+| 430 | File verification error (schema, hash, size, **or** encoding) |
 | 435 | Decryption error |
-| **440** | Duplicate — extensions carry `originalKsefNumber` / `originalSessionReferenceNumber` |
+| **440** | Duplicate — `status.extensions` carries `originalKsefNumber` / `originalSessionReferenceNumber` |
 | 450 | Semantic validation error |
 | 500 / 550 | Unknown error / cancelled by system — retry sending |
 
@@ -154,6 +228,47 @@ KSeF number was assigned — this is the legal receipt date for the buyer),
 `permanentStorageDate` (filled later, drives incremental sync — see
 [receiving-and-sync.md](receiving-and-sync.md)) and, per poll, a fresh
 short-lived `upoDownloadUrl`.
+
+### 3.1 Reading a rejection
+
+The status object is `{ code, description, details?, extensions? }` — and the
+two optional fields are where the actual diagnosis lives:
+
+```typescript
+export interface InvoiceStatusInfo {
+  code: number;
+  description: string;          // e.g. "Błąd weryfikacji pliku faktury"
+  details?: string[] | null;    // array of STRINGS — the specific reason
+  extensions?: Record<string, string | null> | null; // object, NOT [{key,value}]
+}
+```
+
+**Persist `description` and `details` alongside `code` on every rejection.**
+A bare `430` is an umbrella covering schema violations, hash mismatch, size
+mismatch and encoding errors at once; only the text tells you which one, and
+without it a wrong-encryption bug reads as a size-declaration bug. This is the
+single highest-value line of diagnostics in a KSeF integration — the difference
+between a five-minute fix and a multi-day hunt.
+
+```typescript
+await db.markRejected(invoiceId, {
+  code: st.status.code,
+  error: [st.status.description, ...(st.status.details ?? [])].filter(Boolean).join(' | '),
+});
+```
+
+`extensions` is a **string-keyed object**, not a list of `{key, value}` pairs.
+Reading it as a list makes the duplicate path silently dead — the lookup
+returns `undefined`, the invoice keeps no KSeF number, and nothing errors:
+
+```typescript
+// 440 — the invoice already exists in KSeF, filed by an earlier attempt.
+if (st.status.code === 440) {
+  const originalKsefNumber = st.status.extensions?.originalKsefNumber;
+  const originalSessionRef = st.status.extensions?.originalSessionReferenceNumber;
+  // Treat as success against the ORIGINAL identifiers, then fetch its UPO (§4).
+}
+```
 
 Acceptance is usually near-instant. A sensible Vercel pattern: after sending,
 short-poll for ~10–20 s inside `waitUntil()` to catch the common instant
@@ -175,6 +290,36 @@ Per invoice (once status = 200):
 | `GET /sessions/{ref}/invoices/{invoiceRef}/upo` | UPO XML (`application/xml`) |
 | `GET /sessions/{ref}/invoices/ksef/{ksefNumber}/upo` | UPO XML by KSeF number |
 | `upoDownloadUrl` from a status response | UPO XML — plain `GET`, **no Authorization header**, not rate-limited, expires at `upoDownloadUrlExpirationDate`; response header `x-ms-meta-hash` = SHA-256 (Base64) of the document |
+
+**Duplicates (440) need the *original* session's reference number.** A 440
+means the invoice was accepted in some *earlier* session, so nothing in the
+current session has a UPO: the current `invoiceRef` has none, and
+`upoDownloadUrl` is absent from the 440 status. Resolve it through the
+by-KSeF-number endpoint scoped to the original session:
+
+```typescript
+async function fetchUpoForDuplicate(
+  baseUrl: string, accessToken: string,
+  originalSessionRef: string, originalKsefNumber: string,
+): Promise<string> {
+  return ksefFetch<string>(
+    baseUrl,
+    `/sessions/${originalSessionRef}/invoices/ksef/${originalKsefNumber}/upo`,
+    { accessToken },
+  );
+}
+```
+
+Two failure modes to avoid here, both silent:
+
+- Resolving the UPO against the *current* session reference — it 404s, and if
+  that fetch sits in a `catch(() => null)` the invoice lands in your database
+  as fiscalised with an empty UPO: no legal proof of filing, no error anywhere.
+  **Never swallow a UPO fetch failure** — leave the invoice in a retryable
+  state and surface it.
+- Marking the invoice complete without a UPO. Verify what you stored: the UPO
+  XML's `NumerReferencyjnySesji` must equal the *original* session reference,
+  and `NumerKSeFDokumentu` the original KSeF number.
 
 Per session: after you close the session, KSeF generates a collective session
 UPO. `GET /sessions/{referenceNumber}` then returns `upo.pages[]`, each with a

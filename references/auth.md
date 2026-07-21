@@ -83,6 +83,14 @@ Details that matter:
   valid in this context), `460` certificate problem, `480` blocked for
   suspected security incident. On DEMO/PRD, qualified-certificate methods wait
   for OCSP/CRL checks; KSeF-token and KSeF-certificate auth verify quickly.
+- **Surface `status.description`/`status.details` verbatim on failure —
+  never replace them with your own guess.** `450` covers several unrelated
+  causes and only the description distinguishes them. A token minted for a
+  different NIP reports something like *"Token nie może być użyty w kontekście
+  {NIP}"* ("token cannot be used in context {NIP}") — the fix is to correct
+  `KSEF_CONTEXT_NIP` (or the tenant's stored context), **not** to mint a new
+  token. An app-level message like "token invalid or inactive" sends operators
+  to re-mint a token they did not need.
 - `POST /auth/token/redeem` (Bearer = authenticationToken) works **exactly
   once** per authentication — a second call returns 400. Persist both tokens
   immediately.
@@ -141,13 +149,19 @@ export async function authenticateWithKsefToken(opts: {
   // Poll until the authentication completes (usually well under a minute).
   const deadline = Date.now() + 60_000;
   for (;;) {
-    const status = await ksefFetch<{ status: { code: number; description?: string } }>(
+    const status = await ksefFetch<{
+      status: { code: number; description?: string; details?: string[] };
+    }>(
       baseUrl, `/auth/${init.referenceNumber}`,
       { accessToken: init.authenticationToken.token },
     );
     if (status.status.code === 200) break;
     if (status.status.code > 200) {
-      throw new Error(`KSeF authentication failed: ${status.status.code} ${status.status.description ?? ''}`);
+      // Pass KSeF's own wording through — e.g. 450 "token cannot be used in
+      // context {NIP}" means wrong context, not a dead token.
+      const detail = [status.status.description, ...(status.status.details ?? [])]
+        .filter(Boolean).join(' — ');
+      throw new Error(`KSeF authentication failed: ${status.status.code} ${detail}`);
     }
     if (Date.now() > deadline) throw new Error('KSeF authentication timed out');
     await sleep(1_000);
