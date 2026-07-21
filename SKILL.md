@@ -57,7 +57,12 @@ TypeScript/Node.js implementations and the deployment patterns for Vercel.
 2. **Encryption is always mandatory.** Every invoice is AES-256-CBC encrypted
    with a session key wrapped via RSA-OAEP(SHA-256) using MF public keys from
    `GET /security/public-key-certificates` — on every environment, TEST
-   included.
+   included. **Upload the raw ciphertext: never prepend the IV to it.** The IV
+   is transmitted once in `encryption.initializationVector`; the MF docs claim
+   it is also a ciphertext prefix, but every official client contradicts that,
+   and prepending it produces invoice status `430` blaming the *invoice size*
+   — a false trail that costs days
+   ([crypto-and-client.md](references/crypto-and-client.md)).
 3. **No webhooks — KSeF never calls you.** All processing is async:
    submit → poll. On Vercel, poll via Cron routes (plus a short `after()`
    poll for instant acceptances), persisting state in a database between
@@ -69,6 +74,16 @@ TypeScript/Node.js implementations and the deployment patterns for Vercel.
 6. **Rate limits are per (context, IP)** with sliding windows and *tight
    hourly caps* (e.g. 20 metadata queries/h). Sync KSeF to your own database;
    never proxy user clicks to the API. Handle 429 + `Retry-After` everywhere.
+7. **The seller NIP must equal the authenticating context NIP.** Nothing in
+   the API links your invoice data to your stored credentials — an unchecked
+   mismatch files legally binding invoices under the wrong taxpayer. Verify
+   before every send, and never fall back to a shared env-var token in a
+   multi-tenant app
+   ([architecture-and-vercel.md](references/architecture-and-vercel.md)).
+8. **Persist `status.description` and `status.details`, not just the code.**
+   Codes are umbrellas — `430` alone spans schema, hash, size and encoding
+   faults; only the text says which. `status.extensions` is a string-keyed
+   **object** (`{ originalKsefNumber: … }` on a `440`), not key/value pairs.
 
 ## Security
 
@@ -117,12 +132,12 @@ specific match; for greenfield design load
 | Architecture & Vercel setup | project setup, architecture, env vars, cron, storage, timeouts, multi-tenant, serverless, go-live | [architecture-and-vercel.md](references/architecture-and-vercel.md) |
 | Authentication & token lifecycle | auth, challenge, accessToken, refreshToken, XAdES, login, /auth, token expiry | [auth.md](references/auth.md) |
 | Crypto & HTTP client | encrypt, AES, RSA-OAEP, public key, publicKeyId, 21470, SHA-256, hash, fetch client | [crypto-and-client.md](references/crypto-and-client.md) |
-| Send single invoices + status/UPO | interactive, sesja interaktywna, send invoice, /sessions/online, UPO, status, duplicate, 440, KSeF number | [sending-interactive.md](references/sending-interactive.md) |
+| Send single invoices + status/UPO | interactive, sesja interaktywna, send invoice, /sessions/online, UPO, status, details, extensions, duplicate, 440, KSeF number, NIP validation, TNrNIP | [sending-interactive.md](references/sending-interactive.md) |
 | Send batches | batch, wsadowa, ZIP, tar.gz, parts, bulk send, /sessions/batch, part upload | [sending-batch.md](references/sending-batch.md) |
 | Receive & sync invoices | download, purchase invoices, cost invoices, query metadata, exports, incremental sync, HWM, PermanentStorage | [receiving-and-sync.md](references/receiving-and-sync.md) |
 | QR codes & offline modes | QR, KOD I, KOD II, verification link, offline24, awaryjny, emergency mode, technical correction | [qr-codes-and-offline.md](references/qr-codes-and-offline.md) |
 | Credentials & permissions | KSeF token, certificate, CSR, enrollment, Offline certificate, permissions, grants, Owner, uprawnienia | [certificates-tokens-permissions.md](references/certificates-tokens-permissions.md) |
-| Limits, errors, test env | 429, rate limit, Retry-After, error code, TEST environment, testdata, self-signed, sandbox, bootstrap | [errors-limits-and-testing.md](references/errors-limits-and-testing.md) |
+| Limits, errors, test env, troubleshooting | 429, rate limit, Retry-After, error code, 430, rejected, troubleshooting, debugging, TEST environment, testdata, self-signed, sandbox, bootstrap | [errors-limits-and-testing.md](references/errors-limits-and-testing.md) |
 
 ## Sources
 
