@@ -70,6 +70,34 @@ npx skills add azimuthpro/ksef-skill
 
 ## Version History
 
+### 1.1.0 (2026-07-21)
+
+Corrections and hardening driven by a field report from a production
+integration, verified against the official C#/Java clients and the live
+OpenAPI spec (API 2.7.0):
+
+- **Invoice encryption (send-blocking)**: the skill prepended the IV to the
+  ciphertext, following a sentence in the MF docs that both official clients
+  contradict. KSeF then decrypted 16 bytes too many and returned status `430`
+  blaming the *invoice size* — a false trail. `encryptDocument()` now returns
+  raw ciphertext; `decryptDocument()` takes the IV as an argument
+- **Export packages**: parts are a binary split, so they must be concatenated
+  before unzipping (the old loop only worked for single-part packages), and
+  the export's IV must be persisted alongside its key to decrypt them at all
+- **Rejection diagnostics**: `status.description` / `status.details` are now
+  documented and propagated everywhere — `430` is an umbrella over schema,
+  hash, size and encoding faults, and only the text distinguishes them
+- **Duplicates (`440`)**: `status.extensions` is a string-keyed object, not a
+  list of key/value pairs; and a duplicate's UPO lives in the *original*
+  session, reachable via `/sessions/{originalRef}/invoices/ksef/{ksefNumber}/upo`
+- **Multi-tenant safety**: new guidance to bind the seller NIP to the
+  authenticating context NIP, and to never fall back to a shared env-var token
+  — either mistake files legally binding invoices under the wrong taxpayer
+- **Pre-send validation**: `TNrNIP` is 10 bare digits (display formatters
+  leaking into XML are a common `430`), plus NIP checksum and XSD validation
+- New "Field-tested pitfalls" table mapping observed symptoms to real causes;
+  clearer `450` guidance (a wrong-context token is not a dead token)
+
 ### 1.0.1 (2026-07-15)
 
 Correctness fixes found by re-verifying against the live OpenAPI spec:
